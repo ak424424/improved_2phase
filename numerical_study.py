@@ -6,6 +6,8 @@ from utils_for_step_size_ML import *
 
 import numpy as np
 import pandas as pd
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
 import time
 import datetime
 import random
@@ -19,23 +21,28 @@ from sklearn.metrics import (mean_absolute_error, root_mean_squared_error, silho
 
 
 class NumericalStudy:
+    """
+        The consolidated framework
+    """
+
     def __init__(self, file, train_orders_number = 5, train_runs_per_order = 100, 
                  train_random_jump_lb = 10, train_random_jump_ub = 100, search_space_regions = 4, 
-                 timeout=1200, k_range=[2,3,4,5], min_sample_size_per_cluster = 5, quantile=0.99,
+                 timeout=1200, k_range=[2,3,4,5], min_sample_size_per_cluster = 5, quantile=0.5,
                  problem_type = 'knapsack') -> None:
         self.file = file
         self.problem_type = problem_type
-        self.train_orders_number = train_orders_number
-        self.train_runs_per_order = train_runs_per_order
-        self.train_random_jump_lb = train_random_jump_lb
-        self.train_random_jump_ub = train_random_jump_ub
-        self.search_space_regions = search_space_regions
-        self.timeout = timeout
-        self.k_range = k_range
-        self.min_sample_size_per_cluster = min_sample_size_per_cluster 
-        self.clustering_fail_flag = 0
-        self.quantile = quantile
+        self.train_orders_number = train_orders_number                  # t
+        self.train_runs_per_order = train_runs_per_order                # C
+        self.train_random_jump_lb = train_random_jump_lb                # j_lb
+        self.train_random_jump_ub = train_random_jump_ub                # j_ub
+        self.search_space_regions = search_space_regions                # the default number of clusters (k) for Block C
+        self.timeout = timeout                                          # time limit of each experiment
+        self.k_range = k_range                                          # the range of k for Block C
+        self.min_sample_size_per_cluster = min_sample_size_per_cluster  # minimal number of observations to be included into each clusters
+        self.clustering_fail_flag = 0                                   # if there is at least one cluster with less observations than minimal allowed number, the flag is 1
+        self.quantile = quantile                                        # quantile for computing step size (Algorithm 2)
 
+        # The tables to record results
         self.results_columns = ['p','n','Combination', '# of iterations', '# of solved IPs', 
                                 '# of skipped IPs (relaxations)', 
                                 '# of infeasible IPs', '# of Pareto efficient solutions',  'Total time in seconds', 
@@ -67,6 +74,9 @@ class NumericalStudy:
         self.confusion_matrix_ml_2 = None
 
     def file_unpacking(self):
+        """
+        Unpacks input file.
+        """
         if self.problem_type == 'knapsack':
             objective_matrix_given, constraint_matrix, b_vector, p = problem_unpacking_kp(self.file)
             self.f_star_coef = 1
@@ -87,6 +97,9 @@ class NumericalStudy:
         self.ef_columns = ['ef'+str(x) for x in range(1, self.p+1)]
 
     def train_runs(self):
+        """
+            Phase I. Algorithm 1
+        """
         print('==== Train runs ====')
         x_solutions_train = []
         for_graph_ef_vectors = []
@@ -96,7 +109,7 @@ class NumericalStudy:
         train_run_times = []
         train_orders = []
 
-        for test_order in self.train_orders:
+        for test_order in self.train_orders:                            
             objective_matrix = self.objective_matrix_given.copy()
             objective_matrix = [objective_matrix[i] for i in test_order]
             objective_matrix = np.array(objective_matrix)
@@ -218,6 +231,7 @@ class NumericalStudy:
             end_time = datetime.datetime.now()
             run_time = (end_time - start_time).total_seconds()
 
+        # Exclude eps values, objective vectors and feasibility flags for relaxation
         self.for_graph_ef_vectors, self.for_graph_f_stars, self.for_graph_feasibility_flag, temp = relaxation_check(for_graph_f_stars,
                                                                                                                for_graph_ef_vectors, 
                                                                                                                for_graph_feasibility_flag, 
@@ -225,16 +239,16 @@ class NumericalStudy:
                                                                                                                self.ef_columns)
 
         self.x_solutions_train = x_solutions_train
-        # self.for_graph_ef_vectors = for_graph_ef_vectors
-        # self.for_graph_f_stars = for_graph_f_stars
-        # self.for_graph_feasibility_flag = for_graph_feasibility_flag
         self.train_run_times = train_run_times
         self.train_orders_list = train_orders
         self.time_train_runs = sum(train_run_times)
         self.n_solutions_phase_1 = temp
-        print('Unique soltuions found - ', self.n_solutions_phase_1)
+        print('Phase I: Pareto optimal soltuions found - ', self.n_solutions_phase_1)
         
     def ml_model_1_best_combo(self):
+        """
+            Block B
+        """
         print('==== ML model 1 training ====')
         start_time = datetime.datetime.now()
         objective_matrix = self.objective_matrix_given.copy()
@@ -242,7 +256,7 @@ class NumericalStudy:
 
         # ML part #1 - best order
 
-        # Create features - for each objective 
+        # Create features - Objective Function Feature 
         maxes, mines = fmin_fmax_estimation(objective_matrix, self.constraint_matrix, self.b_vector, self.n, OutputFlag = 0)
         if np.max(maxes) == 0:
             extremes = np.array(mines)/np.min(mines)
@@ -268,18 +282,17 @@ class NumericalStudy:
         for col in self.f_columns:
             self.jump_updated_general.append(round(np.quantile(df_x[[col]].sort_values(by=col).diff().dropna(), self.quantile)))
 
-        # Create features - for each objective 
+        # Form feature vectors following the order o
 
         features = []
 
         for t in range(0, len(self.all_orders)):
-
-            # Scaled objectives ordered
+            # Objective Function Feature ordered
             temp_order_train = self.all_orders[t]
             temp_obj_matrix_stats = [np.array(obj_matrix_stats[i]) for i in temp_order_train]
             temp_features = list(itertools.chain.from_iterable(temp_obj_matrix_stats))
 
-            # Product of objectives in constraint space
+            # Constraint Space Features
             temp_objective_matrix = [objective_matrix[i].tolist() for i in temp_order_train]
             temp_objective_matrix.pop(-1)
             constraint_space_feature = np.array([abs(prod(x))**(1./(self.p-1)) for x in zip(*temp_objective_matrix)])
@@ -296,11 +309,12 @@ class NumericalStudy:
             temp_features.append(q1)
             temp_features.append(q2)
 
-            # Infromation about increments
+            # Infromation about increments - Solution  Space Feature
             temp_incr = [self.jump_updated_general[i]/self.jump_updated_general[temp_order_train[-1]] for i in temp_order_train[:-1]]
             temp_features.extend(temp_incr)
             features.append(temp_features)
 
+        # Prepare train data set
         features_names = ['f'+str(x) for x in range(1,len(features[0])+1)]
         df_all_orders = pd.DataFrame(features, columns=features_names)
         df_all_orders['combo'] = self.all_orders
@@ -313,6 +327,7 @@ class NumericalStudy:
         y_train = np.array(df_train['time'])
         x_train = np.array(df_train[features_names])
 
+        # Train ML model
         best_params = bayesian_search_main(RandomForestRegressor(), x_train, y_train, task = 'regression')
         regression = RandomForestRegressor(**best_params)
         regression.fit(x_train, y_train)
@@ -330,11 +345,19 @@ class NumericalStudy:
         self.time_ml_model_1 = (end_time - start_time).total_seconds()
 
     def set_k(self, k):
+        """
+            Helper function
+        """
         self.search_space_regions = k     
 
     def ml_model_2_clustering(self):
+        """
+            Block C
+        """
         print('==== ML model 2 training ====')
         start_time = datetime.datetime.now()
+
+        # Organize required input data in most optimal order predicted by Block B
         objective_matrix = self.objective_matrix_given.copy()
         objective_matrix = [objective_matrix[i] for i in self.best_combo]
         objective_matrix = np.array(objective_matrix)
@@ -354,7 +377,9 @@ class NumericalStudy:
 
         for i,col in zip(self.best_combo, ef_columns):
             train_data_df[col] = [x[i] for x in self.for_graph_ef_vectors]
-        # drop infeasible solutions?
+
+        # Clustering part
+        # drop infeasible solutions
         train_data_df = train_data_df.drop(train_data_df[train_data_df['f1']==-1].index)
 
         df_x = pd.DataFrame([objective_matrix @ x for x in self.x_solutions_train],
@@ -378,6 +403,8 @@ class NumericalStudy:
             self.search_area_min = {}
             self.search_area_max = {}
 
+            # Compute the step size for each search region (cluster)
+
             for label in range(0,self.search_space_regions):
                 df_temp = df_x[df_x['labels']==label]
                 temp_list = []
@@ -390,6 +417,9 @@ class NumericalStudy:
                 self.jumps_updated_regions[label] =  temp_list 
                 self.search_area_min[label] = temp_list_min 
                 self.search_area_max[label] = temp_list_max 
+
+            # Classification part
+            # Prepare data set for classification part (scaling)
 
             train_data_df['f1'] = train_data_df['f1']/self.extremes_clustering[0]
 
@@ -417,6 +447,9 @@ class NumericalStudy:
         self.time_ml_model_2 = (end_time - start_time).total_seconds()
 
     def numerical_study_1(self):
+        """
+            Block E for 2phase BC with k >1
+        """
         print('==== Numerical study 1 ====')
         # ML, predicted step size  + best combo
         objective_matrix = self.objective_matrix_given.copy()
@@ -528,11 +561,10 @@ class NumericalStudy:
                 skipped.append(0)
                 solving_run_time += main_model.Runtime
 
+            # The algorithm to predict the region of search space
             if loop_flag==1:
                 search_area_predicted = self.classifier.predict([[ef[i]/self.extremes_clustering[i] for i in range(1, n_objectives-1)]])[0]
                 ef[0] = self.search_area_min[search_area_predicted][0]
-                # ef[1] = self.search_area_min[search_area_predicted][1]
-                # f_max[0] = self.search_area_max[search_area_predicted][0]
                 jump = self.jumps_updated_regions[search_area_predicted]
                 loop_flag = 0
 
@@ -554,8 +586,6 @@ class NumericalStudy:
                                                    ('BC, clusters '+str(self.search_space_regions))) 
         self.df_results_final = pd.concat([self.df_results_final, df_results])
 
-        print(unique_pareto_solutions)
-
         df_train_info.loc[0, self.train_info_columns] = (self.p, self.n, str(self.best_combo), self.time_train_runs,
                                                      self.time_ml_model_1, self.time_ml_model_2, self.mae, self.rmse,
                                                      self.ss, self.dbi, self.accuracy, self.f1_macro, 
@@ -563,6 +593,9 @@ class NumericalStudy:
         self.df_train_info_final = pd.concat([self.df_train_info_final , df_train_info])
         
     def numerical_study_2(self):
+        """
+            Block E for 2phase A and 2phase BC with k=1
+        """
         print('==== Numerical study 2 ====')
         # No ML, updated step size + best combo
         for test_order, scenario in zip([self.best_combo, self.given_order], ['BC, cluster 1', 'R cluster 1']):
@@ -688,7 +721,6 @@ class NumericalStudy:
             total_solved, total_infeasible_solutions, unique_pareto_solutions, _, skipped_runs = post_run_perfromance(f_star_true, 
                                                                                                                       feasibility_flags,
                                                                                                                       skipped)
-            print(unique_pareto_solutions)
             df_results.loc[0, self.results_columns] = (self.p, self.n, str(test_order), (run-1), 
                                                     total_solved, skipped_runs, total_infeasible_solutions,
                                                     unique_pareto_solutions, run_time, 
@@ -697,6 +729,10 @@ class NumericalStudy:
             self.df_results_final = pd.concat([self.df_results_final, df_results])
 
     def full_study(self):
+        """
+            Runs the Models 2phase A, 2phase BC with k=1 and 2phase BC with k=k
+        """
+        
         self.file_unpacking()
         self.train_runs()
         self.ml_model_1_best_combo()
@@ -704,9 +740,12 @@ class NumericalStudy:
         self.numerical_study_1()
         self.numerical_study_2()
 
-        return self.df_results_final, self.df_train_info_final
+        # return self.df_results_final, self.df_train_info_final
     
     def full_study_for_ks(self):
+        """
+            Runs the Models 2phase A, 2phase BC with k=1 and 2phase BC with k = k_range
+        """
         self.file_unpacking()
         self.train_runs()
         self.ml_model_1_best_combo()
@@ -717,40 +756,7 @@ class NumericalStudy:
             self.ml_model_2_clustering()
             self.numerical_study_1()
         
-        return self.df_results_final, self.df_train_info_final
-    
-    def partial_study_for_ks(self):
-        self.file_unpacking()
-        self.train_runs()
-        self.ml_model_1_best_combo()
+        # return self.df_results_final, self.df_train_info_final
 
-        for k in self.k_range:
-            self.search_space_regions = k 
-            self.ml_model_2_clustering()
-            
-            if self.clustering_fail_flag==0:
-                self.numerical_study_1()
-        
-        return self.df_results_final, self.df_train_info_final
                 
-    def custom_study_for_ks(self, best_combo):
-        self.file_unpacking()
-        self.train_runs()
-        objective_matrix = self.objective_matrix_given.copy()
-        objective_matrix = np.array(objective_matrix)
-        df_x = pd.DataFrame([objective_matrix @ x for x in self.x_solutions_train], 
-                                 columns = self.f_columns).drop_duplicates()
-        
-        for col in self.f_columns:
-            self.jump_updated_general.append(round(np.mean(df_x[[col]].sort_values(by=col).diff().dropna())))
-        self.best_combo = best_combo
-
-        for k in self.k_range:
-            self.search_space_regions = k 
-            self.ml_model_2_clustering()
-            
-            if self.clustering_fail_flag==0:
-                self.numerical_study_1()
-        
-        return self.df_results_final, self.df_train_info_final
                     

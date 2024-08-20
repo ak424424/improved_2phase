@@ -7,7 +7,7 @@ from sklearn.base import clone
 # 
 cv = 5
 n_iterations = 50
-n_iterations_ml1 = 2
+n_iterations_ml1 = 50
 
 # Random forest - hyperparameters range
 rf_n_estimators_min = 2
@@ -33,7 +33,7 @@ def rf_bayes_param_grid_generator(n_estimators_param_min=rf_n_estimators_min,
                                   criterion_param=rf_criterion,
                                   class_weight_param=rf_class_weight):
     """
-    Creates the hyperparameters search space for Random Forest optimization through Bayesian Optimization.
+    Creates the hyperparameters search space for Random Forest Classification optimization through Bayesian Optimization.
 
         Args:
           n_estimators_param_min: An integer, a minimal value for n_estimators parameter
@@ -72,7 +72,7 @@ def rfc_bayes_param_grid_generator(n_estimators_param_min=rf_n_estimators_min,
                                   bootstrap_param=rf_bootstrap,
                                   criterion_param=rfc_criterion):
     """
-    Creates the hyperparameters search space for Random Forest optimization through Bayesian Optimization.
+    Creates the hyperparameters search space for Random Forest Regression optimization through Bayesian Optimization.
 
         Args:
           n_estimators_param_min: An integer, a minimal value for n_estimators parameter
@@ -83,7 +83,6 @@ def rfc_bayes_param_grid_generator(n_estimators_param_min=rf_n_estimators_min,
           max_features_param: A dictionary with values for max_features parameter
           bootstrap_param: A dictionary with values for bootstrap parameter
           criterion_param: A dictionary with values for criterion parameter
-          class_weight_param: A dictionary with values for class_weight parameter
 
         Returns:
           The hyperparameters search space for Random Forest optimization through Bayesian Optimization
